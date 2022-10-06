@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <deploy-config>
 	<ra-entity
-		resource-adaptor-id="ResourceAdaptorID[name=HttpClientNIO,vendor=org.restcomm,version=1.0]"
-		entity-name="HttpClientNIO">
+		resource-adaptor-id="ResourceAdaptorID[name=HttpClientNIOResourceAdaptor,vendor=org.restcomm,version=4.0]"
+		entity-name="HttpClientNIOResourceAdaptor">
 		<properties>
 			<property name="DEFAULT_MAX_CONNECTIONS_PER_ROUTE" type="java.lang.Integer" value="500" />
 			<property name="MAX_CONNECTIONS_TOTAL" type="java.lang.Integer" value="1000" />
 			<property name="DEFAULT_SOCKET_TIMEOUT" type="java.lang.Integer" value="30000" />
 			<property name="DEFAULT_CONNECT_TIMEOUT" type="java.lang.Integer" value="30000" />
 		</properties>
-		<ra-link name="HttpClientNIO" />
+		<ra-link name="HttpClientNIOResourceAdaptor" />
 	</ra-entity>
 </deploy-config>

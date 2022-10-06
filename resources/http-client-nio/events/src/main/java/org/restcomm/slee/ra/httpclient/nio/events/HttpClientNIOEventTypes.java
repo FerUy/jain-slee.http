@@ -35,5 +35,5 @@ public interface HttpClientNIOEventTypes {
 	 * the SLEE event type id
 	 */
 	EventTypeID HTTP_CLIENT_NIO_RESPONSE_EVENT_TYPE_ID = new EventTypeID(
-			"HttpClientNIOResponseEvent", "org.restcomm", "1.0");
+			"org.restcomm.slee.ra.httpclient.nio.events.HttpClientNIOResponseEvent", "org.restcomm", "4.0");
 }

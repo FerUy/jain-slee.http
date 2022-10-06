@@ -25,8 +25,8 @@ package org.restcomm.client.slee.resource.http;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +36,7 @@ import javax.slee.Address;
 import javax.slee.EventTypeID;
 import javax.slee.facilities.Tracer;
 import javax.slee.resource.ActivityHandle;
+import javax.slee.resource.ActivityIsEndingException;
 import javax.slee.resource.ConfigProperties;
 import javax.slee.resource.EventFlags;
 import javax.slee.resource.FailureReason;
@@ -49,7 +50,6 @@ import javax.slee.resource.ResourceAdaptorContext;
 import net.java.client.slee.resource.http.HttpClientActivity;
 import net.java.client.slee.resource.http.HttpClientResourceAdaptorSbbInterface;
 import net.java.client.slee.resource.http.event.ResponseEvent;
-import javax.slee.resource.ActivityIsEndingException;
 
 import org.apache.http.HeaderElement;
 import org.apache.http.HeaderElementIterator;
@@ -58,26 +58,22 @@ import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.conn.ConnectionKeepAliveStrategy;
+import org.apache.http.config.Registry;
+import org.apache.http.config.RegistryBuilder;
 import org.apache.http.conn.routing.HttpRoute;
-import org.apache.http.conn.scheme.PlainSocketFactory;
-import org.apache.http.conn.scheme.Scheme;
-import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.conn.socket.ConnectionSocketFactory;
+import org.apache.http.conn.socket.PlainConnectionSocketFactory;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.message.BasicHeaderElementIterator;
-import org.apache.http.params.HttpParams;
-import org.apache.http.params.SyncBasicHttpParams;
-import org.apache.http.protocol.ExecutionContext;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
 
 /**
- * 
  * @author amit bhayani
- * 
  */
 public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
@@ -96,13 +92,12 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
     private static final int MAX_CONNECTIONS_FOR_ROUTES_TOKEN_LENGTH = 4;
 
     protected ResourceAdaptorContext resourceAdaptorContext;
+    protected HttpClient httpclient;
+    protected volatile boolean isActive = false;
     private ConcurrentHashMap<HttpClientActivityHandle, HttpClientActivity> activities;
     private HttpClientResourceAdaptorSbbInterface sbbInterface;
     private ExecutorService executorService;
     private Tracer tracer;
-    protected HttpClient httpclient;
-    protected volatile boolean isActive = false;
-
     // caching the only event this ra fires
     private FireableEventType fireableEventType;
 
@@ -118,27 +113,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
-     * @see
-     * javax.slee.resource.ResourceAdaptor#setResourceAdaptorContext(javax.slee
-     * .resource.ResourceAdaptorContext)
-     */
-    public void setResourceAdaptorContext(ResourceAdaptorContext arg0) {
-        resourceAdaptorContext = arg0;
-        tracer = resourceAdaptorContext.getTracer(HttpClientResourceAdaptor.class.getSimpleName());
-        try {
-            fireableEventType = resourceAdaptorContext.getEventLookupFacility().getFireableEventType(
-                    new EventTypeID("net.java.client.slee.resource.http.event.ResponseEvent", "net.java.client.slee",
-                            "4.0"));
-        } catch (Throwable e) {
-            throw new RuntimeException(e.getMessage(), e);
-        }
-        sbbInterface = new HttpClientResourceAdaptorSbbInterfaceImpl(this);
-    }
-
-    /*
-     * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#raConfigure(javax.slee.resource.
      * ConfigProperties)
      */
@@ -188,7 +163,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         } else {
             try {
                 httpClientFactory = ((Class<? extends HttpClientFactory>) Class.forName(httpClientFactoryClassName))
-                        .newInstance();
+                        .getDeclaredConstructor().newInstance();
             } catch (Exception e) {
                 tracer.severe("failed to load http client factory class", e);
             }
@@ -197,7 +172,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#raActive()
      */
     public void raActive() {
@@ -206,47 +181,44 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         if (httpClientFactory != null) {
             httpclient = httpClientFactory.newHttpClient();
         } else {
-            HttpParams params = new SyncBasicHttpParams();
-            SchemeRegistry schemeRegistry = new SchemeRegistry();
-            schemeRegistry.register(new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
-            schemeRegistry.register(new Scheme("https", 443, SSLSocketFactory.getSocketFactory()));
-            PoolingClientConnectionManager threadSafeClientConnManager = new PoolingClientConnectionManager(
-                    schemeRegistry);
-            threadSafeClientConnManager.setMaxTotal(maxTotal);
-            threadSafeClientConnManager.setDefaultMaxPerRoute(defaultMaxForRoute);
+            Registry<ConnectionSocketFactory> connectionRegistry = RegistryBuilder.<ConnectionSocketFactory>create()
+                    .register("http", PlainConnectionSocketFactory.getSocketFactory())
+                    .register("https", SSLConnectionSocketFactory.getSocketFactory())
+                    .build();
+
+            PoolingHttpClientConnectionManager poolingConnManager = new PoolingHttpClientConnectionManager(connectionRegistry);
+
+            poolingConnManager.setMaxTotal(maxTotal);
+            poolingConnManager.setDefaultMaxPerRoute(defaultMaxForRoute);
             for (Entry<HttpRoute, Integer> entry : maxForRoutes.entrySet()) {
                 if (tracer.isInfoEnabled()) {
                     tracer.info(String.format("Configuring MaxForRoute %s max %d", entry.getKey(), entry.getValue()));
                 }
-                threadSafeClientConnManager.setMaxPerRoute(entry.getKey(), entry.getValue());
+                poolingConnManager.setMaxPerRoute(entry.getKey(), entry.getValue());
             }
-            httpclient = new DefaultHttpClient(threadSafeClientConnManager, params);
-
-            ((DefaultHttpClient) httpclient).setKeepAliveStrategy(new ConnectionKeepAliveStrategy() {
-
-                public long getKeepAliveDuration(HttpResponse response, HttpContext context) {
-                    // Honor 'keep-alive' header
-                    HeaderElementIterator it = new BasicHeaderElementIterator(response
-                            .headerIterator(HTTP.CONN_KEEP_ALIVE));
-                    while (it.hasNext()) {
-                        HeaderElement he = it.nextElement();
-                        String param = he.getName();
-                        String value = he.getValue();
-                        if (value != null && param.equalsIgnoreCase("timeout")) {
-                            try {
-                                return Long.parseLong(value) * 1000;
-                            } catch (NumberFormatException ignore) {
+            httpclient = HttpClients.custom()
+                    .setConnectionManager(poolingConnManager)
+                    .setKeepAliveStrategy((httpResponse, httpContext) -> {
+                        // Honor 'keep-alive' header
+                        HeaderElementIterator it = new BasicHeaderElementIterator(httpResponse
+                                .headerIterator(HTTP.CONN_KEEP_ALIVE));
+                        while (it.hasNext()) {
+                            HeaderElement he = it.nextElement();
+                            String param = he.getName();
+                            String value = he.getValue();
+                            if (value != null && param.equalsIgnoreCase("timeout")) {
+                                try {
+                                    return Long.parseLong(value) * 1000;
+                                } catch (NumberFormatException ignore) {
+                                }
                             }
                         }
-                    }
+                        // otherwise, keep alive for 30 seconds
+                        return 30 * 1000;
+                    })
+                    .build();
 
-                    // otherwise keep alive for 30 seconds
-                    return 30 * 1000;
-                }
-
-            });
-
-            this.idleConnectionMonitorThread = new IdleConnectionMonitorThread(threadSafeClientConnManager, this.tracer);
+            this.idleConnectionMonitorThread = new IdleConnectionMonitorThread(poolingConnManager, this.tracer);
             this.idleConnectionMonitorThread.start();
         }
         isActive = true;
@@ -259,7 +231,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#raStopping()
      */
     public void raStopping() {
@@ -272,7 +244,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#raInactive()
      */
     public void raInactive() {
@@ -290,7 +262,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#raUnconfigure()
      */
     public void raUnconfigure() {
@@ -299,7 +271,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#unsetResourceAdaptorContext()
      */
     public void unsetResourceAdaptorContext() {
@@ -308,11 +280,9 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         sbbInterface = null;
     }
 
-    // CONFIG MANAGENT
-
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#raVerifyConfiguration(javax.slee.
      * resource.ConfigProperties)
@@ -412,9 +382,11 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     }
 
+    // CONFIG MANAGENT
+
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#raConfigurationUpdate(javax.slee.
      * resource.ConfigProperties)
@@ -423,11 +395,9 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         // not supported
     }
 
-    // EVENT FILTERING
-
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#serviceActive(javax.slee.resource
      * .ReceivableService)
@@ -436,9 +406,11 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         // no event filtering
     }
 
+    // EVENT FILTERING
+
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#serviceStopping(javax.slee.resource
      * .ReceivableService)
@@ -449,7 +421,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#serviceInactive(javax.slee.resource
      * .ReceivableService)
@@ -458,33 +430,31 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         // no event filtering
     }
 
-    // ACCESS INTERFACE
-
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#getResourceAdaptorInterface(java.
      * lang.String)
      */
     public Object getResourceAdaptorInterface(String arg0) {
         return sbbInterface;
-    };
+    }
+
+    // ACCESS INTERFACE
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#getMarshaler()
      */
     public Marshaler getMarshaler() {
         return null;
     }
 
-    // MANDATORY CALLBACKS
-
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#administrativeRemove(javax.slee.resource
      * .ActivityHandle)
@@ -493,9 +463,11 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     }
 
+    // MANDATORY CALLBACKS
+
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see javax.slee.resource.ResourceAdaptor#getActivity(javax.slee.resource.
      * ActivityHandle)
      */
@@ -505,7 +477,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#getActivityHandle(java.lang.Object)
      */
@@ -522,7 +494,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#queryLiveness(javax.slee.resource
      * .ActivityHandle)
@@ -534,11 +506,9 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         }
     }
 
-    // OPTIONAL CALLBACKS
-
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#eventProcessingSuccessful(javax.slee
      * .resource.ActivityHandle, javax.slee.resource.FireableEventType,
@@ -546,13 +516,15 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
      * javax.slee.resource.ReceivableService, int)
      */
     public void eventProcessingSuccessful(ActivityHandle arg0, FireableEventType arg1, Object arg2, Address arg3,
-            ReceivableService arg4, int arg5) {
+                                          ReceivableService arg4, int arg5) {
         // not used
     }
 
+    // OPTIONAL CALLBACKS
+
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#eventProcessingFailed(javax.slee.
      * resource.ActivityHandle, javax.slee.resource.FireableEventType,
@@ -561,20 +533,20 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
      * javax.slee.resource.FailureReason)
      */
     public void eventProcessingFailed(ActivityHandle arg0, FireableEventType arg1, Object arg2, Address arg3,
-            ReceivableService arg4, int arg5, FailureReason arg6) {
+                                      ReceivableService arg4, int arg5, FailureReason arg6) {
         // not used
     }
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#eventUnreferenced(javax.slee.resource
      * .ActivityHandle, javax.slee.resource.FireableEventType, java.lang.Object,
      * javax.slee.Address, javax.slee.resource.ReceivableService, int)
      */
     public void eventUnreferenced(ActivityHandle arg0, FireableEventType arg1, Object arg2, Address arg3,
-            ReceivableService arg4, int arg5) {
+                                  ReceivableService arg4, int arg5) {
         if (tracer.isFineEnabled()) {
             tracer.fine(String.format("Event=%s unreferenced", arg2));
         }
@@ -598,7 +570,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#activityEnded(javax.slee.resource
      * .ActivityHandle)
@@ -612,7 +584,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /*
      * (non-Javadoc)
-     * 
+     *
      * @see
      * javax.slee.resource.ResourceAdaptor#activityUnreferenced(javax.slee.resource
      * .ActivityHandle)
@@ -621,15 +593,35 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         // not used
     }
 
-    // OWN METHODS
-
     /**
      * Retrieves the ra context
-     * 
+     *
      * @return
      */
     public ResourceAdaptorContext getResourceAdaptorContext() {
         return resourceAdaptorContext;
+    }
+
+    // OWN METHODS
+
+    /*
+     * (non-Javadoc)
+     *
+     * @see
+     * javax.slee.resource.ResourceAdaptor#setResourceAdaptorContext(javax.slee
+     * .resource.ResourceAdaptorContext)
+     */
+    public void setResourceAdaptorContext(ResourceAdaptorContext arg0) {
+        resourceAdaptorContext = arg0;
+        tracer = resourceAdaptorContext.getTracer(HttpClientResourceAdaptor.class.getSimpleName());
+        try {
+            fireableEventType = resourceAdaptorContext.getEventLookupFacility().getFireableEventType(
+                    new EventTypeID("net.java.client.slee.resource.http.event.ResponseEvent", "net.java.client.slee",
+                            "4.0"));
+        } catch (Throwable e) {
+            throw new RuntimeException(e.getMessage(), e);
+        }
+        sbbInterface = new HttpClientResourceAdaptorSbbInterfaceImpl(this);
     }
 
     /**
@@ -641,7 +633,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /**
      * Maps the specified activity to the specified handle
-     * 
+     *
      * @param activityHandle
      * @param activity
      */
@@ -651,7 +643,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /**
      * Ends the specified activity
-     * 
+     *
      * @param activity
      */
     public void endActivity(HttpClientActivity activity) {
@@ -665,7 +657,7 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
 
     /**
      * Receives an Event from the HTTP client and sends it to the SLEE.
-     * 
+     *
      * @param event
      * @param activity
      */
@@ -683,112 +675,13 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         }
     }
 
-    protected class AsyncExecuteMethodHandler implements Runnable {
-
-        private final HttpRequest httpRequest;
-        private final HttpContext httpContext;
-        private final HttpHost httpHost;
-        private final HttpClientActivity activity;
-        private final Object requestApplicationData;
-
-        protected AsyncExecuteMethodHandler(HttpUriRequest request, Object requestApplicationData,
-                HttpClientActivity activity, HttpContext httpContext) {
-            this(null, request, requestApplicationData, httpContext, activity);
-        }
-
-        protected AsyncExecuteMethodHandler(HttpHost target, HttpRequest request, Object requestApplicationData,
-                HttpContext context, HttpClientActivity activity) {
-            this.httpHost = target;
-            this.httpRequest = request;
-            this.httpContext = context;
-            this.activity = activity;
-            this.requestApplicationData = requestApplicationData;
-        }
-
-        public void run() {
-            if (tracer.isFineEnabled()) {
-                tracer.fine("Executing Request " + httpRequest);
-            }
-
-            ResponseEvent event = null;
-            HttpResponse response = null;
-            try {
-
-                if (this.httpHost != null) {
-                    response = httpclient.execute(this.httpHost, this.httpRequest, this.httpContext);
-                } else if (this.httpContext != null) {
-                    response = httpclient.execute((HttpUriRequest) this.httpRequest, this.httpContext);
-                }
-
-                //track response inactivity for later closing
-                ((HttpClientActivityImpl)activity).addResponse(response);
-                        
-                if (tracer.isFineEnabled()) {
-                    tracer.fine("Executed Request " + httpRequest);
-                }
-
-                // create event with response
-                event = new ResponseEvent(response, requestApplicationData);
-            } catch (IOException e) {
-                tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with IOException", e);
-                event = new ResponseEvent(e, requestApplicationData);
-
-            } catch (Exception e) {
-                tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with Exception", e);
-                event = new ResponseEvent(e, requestApplicationData);
-            }
-
-            // process event
-            try {
-                processResponseEvent(event, this.activity);
-            } catch (ActivityIsEndingException e) {
-                this.activity.endActivity();
-                ((HttpClientActivityImpl) this.activity).setEnded(true);
-
-            }
-
-            // If EndOnReceivingResponse is set to true, end the Activity
-            if (this.activity.getEndOnReceivingResponse()) {
-                try {
-                    endActivity(this.activity);
-                } finally {
-                    ((HttpClientActivityImpl) this.activity).setEnded(true);
-                }
-            }
-            
-            //this piece needs to be after previous section to cover the 
-            // EndOnReceivingResponse=true scenario, and response is properly closed
-            if (this.activity.isEnded()) {
-                // received response event for which activity is already ended.
-                // Just add this in logs
-                tracer.warning(String.format(
-                        "Wanted to fire ResponseEvent for HttpClientActivity %s but activity is already ended, "
-                                + "droping event", this.activity.getSessionId()));
-                
-                //some cleaning so no leaks
-                if (response != null) {
-                    try {
-                        InputStream responsedStream = response.getEntity().getContent();
-                        responsedStream.close();
-                        EntityUtils.consumeQuietly(response.getEntity());
-                    } catch (IOException e) {
-                        tracer.severe("Exception while housekeeping. Event unreferenced", e);
-                    }
-                }
-                
-                return;
-            }            
-        }
-
-    }
-
     public static class IdleConnectionMonitorThread extends Thread {
 
-        private final PoolingClientConnectionManager connMgr;
-        private volatile boolean shutdown;
+        private final PoolingHttpClientConnectionManager connMgr;
         private final Tracer tracer;
+        private volatile boolean shutdown;
 
-        public IdleConnectionMonitorThread(PoolingClientConnectionManager connMgr, Tracer tracer) {
+        public IdleConnectionMonitorThread(PoolingHttpClientConnectionManager connMgr, Tracer tracer) {
             super();
             this.connMgr = connMgr;
             this.tracer = tracer;
@@ -825,6 +718,100 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
             }
         }
 
+    }
+
+    protected class AsyncExecuteMethodHandler implements Runnable {
+
+        private final HttpRequest httpRequest;
+        private final HttpContext httpContext;
+        private final HttpHost httpHost;
+        private final HttpClientActivity activity;
+        private final Object requestApplicationData;
+
+        protected AsyncExecuteMethodHandler(HttpUriRequest request, Object requestApplicationData,
+                                            HttpClientActivity activity, HttpContext httpContext) {
+            this(null, request, requestApplicationData, httpContext, activity);
+        }
+
+        protected AsyncExecuteMethodHandler(HttpHost target, HttpRequest request, Object requestApplicationData,
+                                            HttpContext context, HttpClientActivity activity) {
+            this.httpHost = target;
+            this.httpRequest = request;
+            this.httpContext = context;
+            this.activity = activity;
+            this.requestApplicationData = requestApplicationData;
+        }
+
+        public void run() {
+            if (tracer.isFineEnabled()) {
+                tracer.fine("Executing Request " + httpRequest);
+            }
+
+            ResponseEvent event = null;
+            HttpResponse response = null;
+            try {
+
+                if (this.httpHost != null) {
+                    response = httpclient.execute(this.httpHost, this.httpRequest, this.httpContext);
+                } else if (this.httpContext != null) {
+                    response = httpclient.execute((HttpUriRequest) this.httpRequest, this.httpContext);
+                }
+
+                //track response inactivity for later closing
+                ((HttpClientActivityImpl) activity).addResponse(response);
+
+                if (tracer.isFineEnabled()) {
+                    tracer.fine("Executed Request " + httpRequest);
+                }
+                // create event with response
+                event = new ResponseEvent(response, requestApplicationData);
+            } catch (IOException e) {
+                tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with IOException", e);
+                event = new ResponseEvent(e, requestApplicationData);
+
+            } catch (Exception e) {
+                tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with Exception", e);
+                event = new ResponseEvent(e, requestApplicationData);
+            }
+
+            // process event
+            try {
+                processResponseEvent(event, this.activity);
+            } catch (ActivityIsEndingException e) {
+                this.activity.endActivity();
+                ((HttpClientActivityImpl) this.activity).setEnded(true);
+            }
+
+            // If EndOnReceivingResponse is set to true, end the Activity
+            if (this.activity.getEndOnReceivingResponse()) {
+                try {
+                    endActivity(this.activity);
+                } finally {
+                    ((HttpClientActivityImpl) this.activity).setEnded(true);
+                }
+            }
+
+            //this piece needs to be after previous section to cover the
+            // EndOnReceivingResponse=true scenario, and response is properly closed
+            if (this.activity.isEnded()) {
+                // received response event for which activity is already ended.
+                // Just add this in logs
+                tracer.warning(String.format(
+                        "Wanted to fire ResponseEvent for HttpClientActivity %s but activity is already ended, "
+                                + "dropping event", this.activity.getSessionId()));
+
+                //some cleaning so no leaks
+                if (response != null) {
+                    try {
+                        InputStream responseStream = response.getEntity().getContent();
+                        responseStream.close();
+                        EntityUtils.consumeQuietly(response.getEntity());
+                    } catch (IOException e) {
+                        tracer.severe("Exception while housekeeping. Event unreferenced", e);
+                    }
+                }
+            }
+        }
     }
 
 }

@@ -10,13 +10,18 @@
 
 	<groupId>org.mobicents.servers.jainslee.http</groupId>
 	<artifactId>restcomm-slee-http</artifactId>
-	<version>7.0.0-SNAPSHOT</version>
+	<version>7.2.0-SNAPSHOT</version>
 
 	<packaging>pom</packaging>
 
 	<properties>
 		<maven.du.plugin.version>4.0.2</maven.du.plugin.version>
 		<restcomm.jain.slee.version>7.1.82</restcomm.jain.slee.version>
+		<apache.httpcomponent.core.version>4.4.14</apache.httpcomponent.core.version>
+		<apache.httpclient.version>4.5.13</apache.httpclient.version>
+		<apache.httpasyncclient.version>4.1.5-1</apache.httpasyncclient.version>
+		<compiler.plugin.version>3.8.1</compiler.plugin.version>
+		<compile.source>11</compile.source>
 	</properties>
 
 	<modules>
@@ -32,22 +37,22 @@
 			<dependency>
 				<groupId>org.apache.httpcomponents</groupId>
 				<artifactId>httpasyncclient</artifactId>
-				<version>4.1.2</version>
+				<version>${apache.httpasyncclient.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.apache.httpcomponents</groupId>
 				<artifactId>httpclient</artifactId>
-				<version>4.5.2</version>
+				<version>${apache.httpclient.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.apache.httpcomponents</groupId>
 				<artifactId>httpcore</artifactId>
-				<version>4.4.5</version>
+				<version>${apache.httpcomponent.core.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.apache.httpcomponents</groupId>
 				<artifactId>httpcore-nio</artifactId>
-				<version>4.4.5</version>
+				<version>${apache.httpcomponent.core.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>commons-logging</groupId>
@@ -84,18 +89,26 @@
 				</plugins>
 			</build>
 		</profile>
+		<profile>
+			<id>release</id>
+			<modules>
+				<module>resources/http-servlet</module>
+				<module>resources/http-client</module>
+				<module>resources/http-client-nio</module>
+				<module>enablers/rest-client</module>
+			</modules>
+		</profile>
 	</profiles>
 
 	<build>
 		<plugins>
 			<plugin>
-				<groupId>org.apache.m2aven.plugins</groupId>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
-				<version>2.3.2</version>
+				<version>${compiler.plugin.version}</version>
 				<configuration>
-					<source>1.7</source>
-					<target>1.7</target>
-					<debug>true</debug>
+					<source>${compile.source}</source>
+					<target>${compile.source}</target>
 				</configuration>
 			</plugin>
 		</plugins>
