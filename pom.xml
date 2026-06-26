@@ -15,7 +15,7 @@
 	<packaging>pom</packaging>
 
 	<properties>
-		<maven.du.plugin.version>4.0.1</maven.du.plugin.version>
+		<maven.du.plugin.version>4.0.2</maven.du.plugin.version>
 		<restcomm.jain.slee.version>7.1.82</restcomm.jain.slee.version>
 		<apache.httpcomponent.core.version>4.4.14</apache.httpcomponent.core.version>
 		<apache.httpclient.version>4.5.13</apache.httpclient.version>
