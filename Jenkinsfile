@@ -1,78 +1,64 @@
 pipeline {
     agent any
     tools {
-        jdk 'JDK 11'
-        maven 'Maven_3.8.5'
-    }
-    parameters {
-        string(name: 'version', defaultValue: '7.2.0', description: 'The major version number for the JSLEE HTTP')
+        jdk 'jdk-11'
+        maven 'maven-3.9.12'
     }
     options {
-        timeout(time: 1, unit: 'HOURS')
-       	buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '30', numToKeepStr: '10'))
+        buildDiscarder(logRotator(daysToKeepStr: '10', numToKeepStr: '10'))
+    }
+    parameters {
+        string(name: 'JSLEE_HTTP_VERSION', defaultValue: '7.2.0', description: 'The major version for JAIN SLEE HTTP')
+    }
+    environment {
+        HTTP_BUILD_VERSION = "${params.JSLEE_HTTP_VERSION}-${BUILD_NUMBER}"
     }
     stages {
-        stage('Set Version') {
-            steps{
-                script{
-                    currentBuild.displayName = "${params.version}-${BUILD_NUMBER}"
+        stage("Build") {
+            steps {
+                script {
+                    HTTP_BUILD_VERSION = "${params.JSLEE_HTTP_VERSION}-${BUILD_NUMBER}"
+                    currentBuild.displayName = "#${HTTP_BUILD_VERSION}"
                     currentBuild.description = "JAIN SLEE HTTP (${env.BRANCH_NAME})"
                 }
-                sh "mvn versions:set -DnewVersion=${params.version}-${BUILD_NUMBER}"
+                sh "mvn clean install -Dmaven.test.skip=true"
             }
         }
-        stage('Build') {
-            steps{
-                sh "mvn clean install -DskipTests"
+        stage('Set Version') {
+            steps {
+                sh "mvn versions:set -DgenerateBackupPoms=false -DnewVersion=${HTTP_BUILD_VERSION}"
                 sh "mvn versions:commit"
             }
         }
-        stage('Release'){
-            steps{
-                echo "Building a release version of #${params.version}-${BUILD_NUMBER}"
-                sh "mvn clean install -Prelease -Drelease.dir=../../../${params.version}-${BUILD_NUMBER}"
-   				echo "Building a release version completed."
-            }
-        }
-        stage('Zip artifact'){
-            steps{
-                script {
-                    VERSION_FOLDER = "${params.version}-${BUILD_NUMBER}"
-                }
-                sh " find ${VERSION_FOLDER}/resources -maxdepth 1 -type d -exec zip -r -qq {}.zip {} \\;"
-                sh " find ${VERSION_FOLDER}/extra -maxdepth 1 -type d -exec zip -r -qq {}.zip {} \\;"
-                sh " find ${VERSION_FOLDER}/enablers -maxdepth 1 -type d -exec zip -r -qq {}.zip {} \\;"
-                // sh " find ${VERSION_FOLDER} -iname \"*.zip\" -exec mv {} ${VERSION_FOLDER} \\;"
-                //sh " find ${VERSION_FOLDER} -maxdepth 1 -type d -exec rm -rf {} \\;"
-            }
-        }
-        stage('Save artifact'){
-            steps{
-                archiveArtifacts artifacts: "${params.version}-${BUILD_NUMBER}/**/*.zip", followSymlinks: false, onlyIfSuccessful: true
-            }
-        }
-
-        stage('Push to Repo') {
-            when {anyOf{branch 'master'; branch 'release'}}
+        stage("Release") {
             steps {
-                script {
-                    REMOTEPATH = "/var/www/html/NAIKERI/jain_slee_http/${params.version}-${BUILD_NUMBER}"
+                sh "mvn clean install -Prelease -Drelease.dir=../../../${HTTP_BUILD_VERSION} -Dmaven.test.skip=true"
+            }
+        }
+        stage('Zip Resources') {
+            steps {
+                dir("${HTTP_BUILD_VERSION}/resources") {
+                    sh 'find . -maxdepth 1 -type d ! -name . -exec zip -r -qq {}.zip {} \\;'
+                    sh 'find . -maxdepth 1 -type d ! -name . -exec rm -rf {} +'
                 }
-
-                sh "mkdir -p /var/www/html/NAIKERI/jain_slee_http/${params.version}-${BUILD_NUMBER}"
-                sh "cp ${params.version}-${BUILD_NUMBER}/**/*.zip /var/www/html/NAIKERI/jain_slee_http/${params.version}-${BUILD_NUMBER}"
-                /*sshagent (credentials: ['4e708f2a-8b37-414f-a6d4-787690b87738']) {
-                    sh 'ssh -o StrictHostKeyChecking=no -l fer 127.0.0.1 uname -a'
-                	sh "scp release/Naikeri-jSS7-${params.jSS7_MAJOR_VERSION_NUMBER}-${BUILD_NUMBER}.zip fer@127.0.0.1:/var/www/html/NAIKERI/jain_slee_http/${params.version}-${BUILD_NUMBER/"
-                }*/
-                sh "rm -rf ${params.version}-${BUILD_NUMBER}"
-
+            }
+        }
+        stage('Save Artifacts') {
+            steps {
+                archiveArtifacts artifacts: "${HTTP_BUILD_VERSION}/", followSymlinks: false, onlyIfSuccessful: true
+            }
+        }
+        stage('Push to Repo') {
+            when{anyOf {branch 'master'; branch 'release'}}
+            steps {
+                sh "mkdir -p /var/www/html/NAIKERI/jain-slee.http/${HTTP_BUILD_VERSION}/"
+                sh "cp -r ${HTTP_BUILD_VERSION}/ /var/www/html/NAIKERI/jain-slee.http/${HTTP_BUILD_VERSION}/"
+                sh "rm -rf ${HTTP_BUILD_VERSION}"
             }
         }
     }
     post {
-        always {
-            sh "rm -rf ${params.version}-${BUILD_NUMBER}"
-        }
+        success { echo "JAIN-SLEE HTTP successfully built" }
+        failure { echo "Building JAIN-SLEE HTTP failed" }
     }
 }
