@@ -41,6 +41,10 @@ pipeline {
                     sh 'find . -maxdepth 1 -type d ! -name . -exec zip -r -qq {}.zip {} \\;'
                     sh 'find . -maxdepth 1 -type d ! -name . -exec rm -rf {} +'
                 }
+                dir("${HTTP_BUILD_VERSION}/extra") {
+                    sh 'find . -maxdepth 1 -type d ! -name . -exec zip -r -qq {}.zip {} \\;'
+                    sh 'find . -maxdepth 1 -type d ! -name . -exec rm -rf {} +'
+                }
             }
         }
         stage('Save Artifacts') {
