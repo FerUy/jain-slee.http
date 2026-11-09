@@ -70,6 +70,9 @@
             <plugin>
                 <groupId>org.jboss.maven.plugins</groupId>
                 <artifactId>maven-jdocbook-plugin</artifactId>
+                <!-- pinned like the other docs modules: unpinned it resolves to 2.3.7, which fetches the
+                     DocBook 4.5 DTD from www.oasis-open.org and fails on the response -->
+                <version>2.3.5</version>
                 <extensions>true</extensions>
                 <dependencies>
                     <dependency>
